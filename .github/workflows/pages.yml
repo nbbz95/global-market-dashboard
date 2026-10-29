@@ -1,0 +1,42 @@
+name: Refresh data and deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 9 * * 1"   # every Monday: the World Bank updates WDI a few times a year
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: pip install -r requirements.txt
+      - name: Fetch World Bank data
+        id: fetch
+        continue-on-error: true
+        run: python src/fetch.py && python src/build.py
+      - name: Note when the committed snapshot is used
+        if: steps.fetch.outcome != 'success'
+        run: echo "::warning::World Bank API unavailable, deploying the committed snapshot"
+      - name: Tests
+        run: |
+          python -m pytest -q
+          node --test tests/*.test.mjs
+      - name: Deploy to gh-pages
+        if: github.ref == 'refs/heads/main'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./site

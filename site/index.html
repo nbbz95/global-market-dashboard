@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Global Market Indicators</title>
+<meta name="description" content="Interactive dashboard of the most used international macro indicators (GDP, growth, inflation, unemployment, current account, exports, population) for 200+ countries, from the World Bank.">
+<link rel="stylesheet" href="assets/ui.css">
+<style>
+  .filters { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; margin-bottom: 20px; }
+  .filters label { font-size: 13px; color: var(--ink-2); display: flex; gap: 8px; align-items: center; }
+  .filters select { max-width: 240px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; padding: 4px 6px 4px 10px; border-radius: 999px; background: var(--surface); box-shadow: 0 0 0 1px var(--ring); }
+  .chip i { width: 8px; height: 8px; border-radius: 2px; }
+  .chip button { border: 0; background: transparent; color: var(--muted); cursor: pointer; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 15px; line-height: 1; transition: transform 160ms var(--ease-out), background-color 160ms ease; }
+  .chip button:active { transform: scale(0.9); }
+  @media (hover: hover) and (pointer: fine) { .chip button:hover { background: var(--surface-2); color: var(--ink); } }
+  .kpi { position: relative; overflow: hidden; }
+  .kpi .rank { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .kpi .spark { position: absolute; right: 14px; top: 16px; width: 84px; height: 30px; }
+  .kpi .value { font-size: 26px; font-variant-numeric: tabular-nums; }
+  .kpi .yr { font-size: 12px; color: var(--muted); font-weight: 400; margin-left: 4px; letter-spacing: 0; }
+  .ind-tabs { margin-bottom: 14px; }
+  .muted { color: var(--muted); }
+  @media (max-width: 900px) { #kpis .kpi { grid-column: span 6; } }
+  @media (max-width: 560px) { #kpis .kpi { padding: 14px; } #kpis .kpi .value { font-size: 21px; } .kpi .spark { display: none; } .kpi .yr { display: block; margin: 0; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div>
+      <div class="eyebrow">Macro · World Bank data</div>
+      <h1>Global Market Indicators</h1>
+      <p id="intro">The headline indicators analysts track across markets, for 200+ economies. Pick a country, compare it with up to three others and see where it ranks.</p>
+    </div>
+    <button class="btn" id="theme" type="button">Auto</button>
+  </header>
+
+  <div class="filters">
+    <label>Country <select id="country" aria-label="Country"></select></label>
+    <div class="chips" id="compare" aria-label="Compared countries"></div>
+    <label><span class="muted">+</span> <select id="add" aria-label="Add a country to compare"></select></label>
+    <div class="seg" id="range" role="group" aria-label="Time range">
+      <button class="btn" data-y="10">10Y</button><button class="btn" data-y="15">15Y</button><button class="btn" data-y="all">Since 2000</button>
+    </div>
+  </div>
+
+  <section class="grid swap" id="kpis"></section>
+
+  <section class="grid" style="margin-top:16px">
+    <div class="card span-8 reveal">
+      <div class="seg ind-tabs" id="tabs" role="tablist" aria-label="Indicator"></div>
+      <h2 id="chart-title"></h2>
+      <p class="sub" id="chart-sub"></p>
+      <div id="trend"></div>
+    </div>
+    <div class="card span-4 reveal" id="rank-wrap">
+      <div class="card-head">
+        <div><h2 id="rank-title">Ranking</h2><p class="sub" id="rank-sub"></p></div>
+      </div>
+      <div class="seg" id="rank-scope" role="group" aria-label="Ranking scope" style="margin-bottom:12px">
+        <button class="btn" data-s="world">World</button><button class="btn" data-s="region">Same region</button>
+      </div>
+      <div id="rank"></div>
+      <p class="note" id="rank-note" style="margin:10px 0 0"></p>
+    </div>
+    <div class="card span-12 reveal">
+      <h2>Side by side</h2>
+      <p class="sub">Latest available value for each indicator (year in parentheses).</p>
+      <div id="table"></div>
+    </div>
+  </section>
+
+  <footer class="foot">
+    Source: <a href="https://databank.worldbank.org/source/world-development-indicators">World Bank, World Development Indicators</a>
+    <span id="updated"></span>. Refreshed weekly by GitHub Actions.
+    Code on <a href="https://github.com/nbbz95/global-market-dashboard">GitHub</a>.
+  </footer>
+</div>
+
+<script src="assets/charts.js"></script>
+<script src="assets/market.js"></script>
+<script>
+const DEFAULT = { country: "ARG", compare: ["BRA", "USA", "WLD"], ind: "NY.GDP.MKTP.KD.ZG", range: "15", scope: "world" };
+let D, S = { ...DEFAULT }, charts = {};
+const byIso = {};
+const IND = () => D.indicators.find((i) => i.code === S.ind);
+
+function readHash() {
+  const h = Object.fromEntries(new URLSearchParams(location.hash.slice(1)));
+  if (h.country && byIso[h.country]) S.country = h.country;
+  if (h.compare !== undefined) S.compare = h.compare.split(",").filter((c) => byIso[c] && c !== S.country).slice(0, 3);
+  if (h.ind && D.indicators.some((i) => i.code === h.ind)) S.ind = h.ind;
+  if (["10", "15", "all"].includes(h.range)) S.range = h.range;
+  if (["world", "region"].includes(h.scope)) S.scope = h.scope;
+}
+function writeHash() {
+  try { history.replaceState(null, "", "#" + new URLSearchParams({ ...S, compare: S.compare.join(",") })); } catch (e) {}
+}
+
+function countryOptions(sel, exclude = []) {
+  const groups = {};
+  D.countries.forEach((c) => { if (!exclude.includes(c.iso3)) (groups[c.region] = groups[c.region] || []).push(c); });
+  return Object.keys(groups).sort((a, b) => (a === "Aggregate") - (b === "Aggregate") || a.localeCompare(b))
+    .map((g) => `<optgroup label="${g}">${groups[g].map((c) => `<option value="${c.iso3}"${c.iso3 === sel ? " selected" : ""}>${c.name}</option>`).join("")}</optgroup>`).join("");
+}
+
+function sparkline(values, color) {
+  const pts = values.map((v, i) => [i, v]).filter((p) => p[1] != null);
+  if (pts.length < 2) return "";
+  const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys) || 1;
+  const X = (x) => ((x - x0) / (x1 - x0 || 1)) * 80 + 2, Y = (y) => 28 - ((y - y0) / (y1 - y0 || 1)) * 24;
+  const d = pts.map((p, i) => (i ? "L" : "M") + X(p[0]).toFixed(1) + "," + Y(p[1]).toFixed(1)).join("");
+  const last = pts[pts.length - 1];
+  return `<svg class="spark" viewBox="0 0 84 30" aria-hidden="true"><path d="${d}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" opacity=".9"/><circle cx="${X(last[0])}" cy="${Y(last[1])}" r="2.5" fill="${color}"/></svg>`;
+}
+
+function render() {
+  writeHash();
+  const c = byIso[S.country];
+  const { start, years } = Market.sliceYears(D, S.range === "all" ? D.years[0] : D.years[D.years.length - 1] - (+S.range - 1));
+  document.getElementById("country").innerHTML = countryOptions(S.country);
+  document.getElementById("add").innerHTML = `<option value="">Compare with…</option>` + (S.compare.length < 3 ? countryOptions("", [S.country, ...S.compare]) : "");
+  document.getElementById("add").disabled = S.compare.length >= 3;
+  const series = [S.country, ...S.compare];
+  document.getElementById("compare").innerHTML = S.compare.map((iso, i) =>
+    `<span class="chip"><i style="background:${Charts.seriesColor(i + 1)}"></i>${byIso[iso].name}<button type="button" data-rm="${iso}" aria-label="Remove ${byIso[iso].name}">×</button></span>`).join("");
+  document.querySelectorAll("#range .btn").forEach((b) => b.setAttribute("aria-pressed", b.dataset.y === S.range));
+  document.querySelectorAll("#rank-scope .btn").forEach((b) => b.setAttribute("aria-pressed", b.dataset.s === S.scope));
+  document.querySelector('#rank-scope [data-s="region"]').disabled = c.region === "Aggregate";
+
+  // KPI tiles for the selected country.
+  const k = document.getElementById("kpis");
+  k.classList.add("is-updating");
+  requestAnimationFrame(() => {
+    k.innerHTML = D.indicators.map((ind) => {
+      const vals = D.values[ind.code][S.country] || [];
+      const l = Market.latest(vals, D.years);
+      const ch = Market.change(vals, D.years);
+      const txt = Market.fmtChange(ch, ind.format);
+      const flat = ch && (ind.format === "pct" ? Math.abs(ch.abs) < 0.05 : Math.abs(ch.rel || 0) < 0.0005);
+      const good = ch && !flat && ind.higher_is_better != null ? (ch.abs >= 0) === ind.higher_is_better : null;
+      const rank = c.region !== "Aggregate" ? Market.ranking(D, ind.code).find((r) => r.iso3 === S.country) : null;
+      const total = Market.ranking(D, ind.code).length;
+      return `<button class="card kpi span-3" data-ind="${ind.code}" style="text-align:left;cursor:pointer;border:0;font:inherit;color:inherit" aria-pressed="${ind.code === S.ind}">
+        ${sparkline(vals.slice(start), ind.code === S.ind ? Charts.css("--s1") : Charts.css("--axis"))}
+        <div class="label">${ind.name}</div>
+        <div class="value">${l ? Market.fmt(l.value, ind.format) : "n/a"}<span class="yr">${l ? l.year : ""}</span></div>
+        <div class="delta ${good == null ? "" : good ? "up" : "down"}">${txt ? `${txt} vs ${ch.from}` : "no prior year"}</div>
+        <div class="rank">${rank ? `#${rank.rank} of ${total} economies` : "&nbsp;"}</div>
+      </button>`;
+    }).join("");
+    k.querySelectorAll(".kpi").forEach((t) => {
+      if (t.dataset.ind === S.ind) t.style.boxShadow = "0 0 0 2px var(--s1)";
+      t.addEventListener("click", () => { S.ind = t.dataset.ind; render(); });
+    });
+    k.classList.remove("is-updating");
+  });
+
+  // Indicator tabs + trend chart.
+  const ind = IND();
+  document.getElementById("tabs").innerHTML = D.indicators.map((i) => `<button class="btn" role="tab" data-t="${i.code}" aria-pressed="${i.code === S.ind}">${i.name}</button>`).join("");
+  document.getElementById("chart-title").textContent = `${ind.name}`;
+  document.getElementById("chart-sub").textContent = `${ind.unit[0].toUpperCase() + ind.unit.slice(1)}, ${years[0]}–${years[years.length - 1]}. Hover for values.`;
+  const trend = document.getElementById("trend");
+  trend.id = "trend";
+  charts.trend = Charts.line(trend, {
+    labels: years.map(String),
+    series: series.map((iso, i) => ({ name: byIso[iso].name, values: (D.values[ind.code][iso] || []).slice(start), slot: i })),
+    fmt: (v) => Market.fmt(v, ind.format, { compact: false }), tickFmt: (v) => Market.fmt(v, ind.format),
+    zero: ind.format !== "pct" ? true : false, height: 280, aria: `${ind.name} over time`,
+  });
+
+  // Ranking.
+  const scope = S.scope === "region" && c.region !== "Aggregate" ? c.region : null;
+  const r = Market.ranking(D, ind.code, { region: scope });
+  const me = r.find((x) => x.iso3 === S.country);
+  document.getElementById("rank-title").textContent = `Where does ${c.name} rank?`;
+  document.getElementById("rank-sub").textContent = `${ind.name}, latest year, highest first · ${scope || "all economies"}`;
+  let shown = r.slice(0, 10);
+  if (me && me.rank > 10) shown = shown.slice(0, 9).concat([me]);
+  charts.rank = Charts.bars("#rank", {
+    items: shown.map((x) => ({ label: `${x.rank}. ${x.name}`, value: x.value, note: String(x.year), color: x.iso3 === S.country ? Charts.css("--s1") : Charts.css("--axis") })),
+    fmt: (v) => Market.fmt(v, ind.format), valueName: ind.name, labelWidth: 150,
+  });
+  document.getElementById("rank-note").textContent = me
+    ? `${c.name} is #${me.rank} of ${r.length} (${me.year}).` + (me.rank > 10 ? " Shown in blue at the bottom." : "")
+    : c.region === "Aggregate" ? "Aggregates are not ranked." : `No recent data for ${c.name}.`;
+
+  // Table.
+  Charts.table("#table", ["Indicator", ...series.map((iso) => byIso[iso].name)], D.indicators.map((i) =>
+    [`${i.name} <span class="muted">· ${i.unit}</span>`, ...series.map((iso) => {
+      const l = Market.latest(D.values[i.code][iso] || [], D.years);
+      return l ? `${Market.fmt(l.value, i.format, { compact: false })} <span class="muted">(${l.year})</span>` : "n/a";
+    })]));
+  document.querySelectorAll("#table td:first-child").forEach((td) => td.classList.add("text"));
+}
+
+fetch("data.json").then((r) => r.json()).then((d) => {
+  D = d;
+  D.countries.forEach((c) => (byIso[c.iso3] = c));
+  readHash();
+  document.getElementById("updated").textContent = `(dataset updated ${d.updated})`;
+  document.getElementById("country").addEventListener("change", (e) => {
+    S.country = e.target.value; S.compare = S.compare.filter((x) => x !== S.country); render();
+  });
+  document.getElementById("add").addEventListener("change", (e) => { if (e.target.value) { S.compare.push(e.target.value); render(); } });
+  document.getElementById("compare").addEventListener("click", (e) => { const b = e.target.closest("[data-rm]"); if (b) { S.compare = S.compare.filter((x) => x !== b.dataset.rm); render(); } });
+  document.getElementById("range").addEventListener("click", (e) => { const b = e.target.closest("[data-y]"); if (b) { S.range = b.dataset.y; render(); } });
+  document.getElementById("rank-scope").addEventListener("click", (e) => { const b = e.target.closest("[data-s]"); if (b && !b.disabled) { S.scope = b.dataset.s; render(); } });
+  document.getElementById("tabs").addEventListener("click", (e) => { const b = e.target.closest("[data-t]"); if (b) { S.ind = b.dataset.t; render(); } });
+  render();
+  Charts.themeToggle(document.getElementById("theme"), render);
+});
+</script>
+</body>
+</html>
